@@ -1,0 +1,309 @@
+<!--
+ * @Author: strongest-qiang 1309148358@qq.com
+ * @Date: 2023-10-31 20:19:24
+ * @LastEditors: strongest-qiang 1309148358@qq.com
+ * @LastEditTime: 2024-03-17 16:48:26
+ * @FilePath: \webRTC\public\index.html
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <style>
+      video {
+        width: 500px;
+        height: 500px;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <input type="text" id="createRoomId" placeholder="创建房间号" />
+      <input type="text" id="localUserId" placeholder="创建者编号" />
+      <button type="button" id="createRoom">创建</button>
+      <button type="button" id="createVideo">开始视频通话</button>
+      <button type="button" id="local-leave-room">结束通话</button>
+    </div>
+    <div>
+      <input type="text" id="joinRoomId" placeholder="加入会议" />
+      <input type="text" id="remoteUserId" placeholder="回应者编号" />
+      <button type="button" id="joinRoom">进入</button>
+      <button type="button" id="reciveVideo">接收视频通话</button>
+      <button type="button" id="remote-leave-room">结束通话</button>
+    </div>
+    <button type="button" id="socket">获取socket数量</button>
+    <h1>本地vedio</h1>
+    <video id="localVideo"></video>
+    <h1>远程vedio</h1>
+    <video id="remoteVideo"></video>
+    <script type="module">
+      import { io } from "https://cdn.socket.io/4.4.1/socket.io.esm.min.js";
+      const iceServer = {
+        iceServers: [
+          {
+            url: "turn:42.192.40.58:3478?transport=udp",
+            username: "ddssingsong",
+            credential: "123456",
+          },
+          {
+            url: "turn:42.192.40.58:3478?transport=tcp",
+            username: "ddssingsong",
+            credential: "123456",
+          },
+        ],
+      };
+      const PeerConnection =
+        window.PeerConnection ||
+        window.webkitPeerConnection00 ||
+        window.webkitRTCPeerConnection ||
+        window.mozRTCPeerConnection;
+      const nativeRTCIceCandidate =
+        window.mozRTCIceCandidate || window.RTCIceCandidate;
+      const nativeRTCSessionDescription =
+        window.mozRTCSessionDescription || window.RTCSessionDescription;
+
+      const socket = io();
+
+      const localUserId = document.getElementById("localUserId");
+      const remoteUserId = document.getElementById("remoteUserId");
+
+      const createRoom = document.getElementById("createRoom");
+      const createRoomId = document.getElementById("createRoomId");
+
+      const joinRoom = document.getElementById("joinRoom");
+      const joinRoomId = document.getElementById("joinRoomId");
+
+      const createVideo = document.getElementById("createVideo");
+      const reciveVideo = document.getElementById("reciveVideo");
+
+      const localVideoStream = document.getElementById("localVideo");
+      const remoteVideoStream = document.getElementById("remoteVideo");
+
+      const localLeaveRoom = document.getElementById("local-leave-room");
+      const remoteLeaveRoom = document.getElementById("remote-leave-room");
+      // WebRTC连接对象
+      let peerConnection;
+
+      createRoom.addEventListener("click", async () => {
+        socket.emit("createRoom", {
+          userId: localUserId.value,
+          roomId: createRoomId.value,
+        });
+        //初始化PC源
+        // pc = initPC(stream);
+      });
+      createVideo.addEventListener("click", async () => {
+        // let gumStream = await navigator.mediaDevices.getUserMedia({
+        //   video: true,
+        //   audio: true,
+        // });
+        // for (const track of gumStream.getTracks()) {
+        //   peerConnection.addTrack(track);
+        // }
+        // //初始化PC源
+        // localVideoStream.srcObject = gumStream;
+        peerConnection = initPC();
+        let stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        peerConnection.addStream(stream);
+        localVideoStream.srcObject = stream;
+        localVideoStream.play();
+        peerConnection.createOffer().then(function (session_desc) {
+          peerConnection.setLocalDescription(session_desc);
+          socket.emit("send-offer", {
+            roomId: createRoomId.value,
+            sdp: session_desc,
+            userId: localUserId.value,
+          });
+        });
+      });
+
+      joinRoom.addEventListener("click", async () => {
+        socket.emit("peer-join", {
+          userId: remoteUserId.value,
+          roomId: joinRoomId.value,
+        });
+      });
+      reciveVideo.addEventListener("click", async () => {
+        //当收到对方接收请求后,设置音频源,并发送answer给对方
+        peerConnection.createAnswer().then((session_desc) => {
+          peerConnection.setLocalDescription(session_desc);
+          socket.emit("answer", {
+            roomId: joinRoomId.value,
+            sdp: session_desc,
+            userId: remoteUserId.value,
+          });
+        });
+      });
+      localLeaveRoom.addEventListener("click", () => {
+        socket.emit("socket-leave", {
+          roomId: createRoomId.value,
+          userId: localUserId.value,
+        });
+      });
+      remoteLeaveRoom.addEventListener("click", () => {
+        socket.emit("socket-leave", {
+          roomId: joinRoomId.value,
+          userId: remoteUserId.value,
+        });
+      });
+      //初始化PC源
+      function initPC() {
+        let pc = new PeerConnection();
+        pc.onicecandidate = (evt) => {
+          if (evt.candidate) {
+            socket.emit("need-ice_candidate", {
+              roomId: createRoomId.value,
+              userId: localUserId.value,
+              candidate: evt.candidate,
+            });
+          }
+        };
+
+        // pc.ontrack = (ev) => {
+        //   console.log(ev.streams);
+        //   if (ev.streams && ev.streams[0]) {
+        //     console.log("发起者监听到--track");
+        //     remoteVideoStream.srcObject = ev.streams[0];
+        //   }
+        // };
+        pc.onaddstream = (evt) => {
+          let stream = evt.stream;
+          remoteVideoStream.srcObject = stream;
+          remoteVideoStream.play();
+        };
+        return pc;
+      }
+      // 回应者点击加入房间后的，服务器通知要进行发起会话了。
+      socket.on("create-offer", (res) => {
+        if (res.code == 1) {
+          alert(res.msg);
+        }
+      });
+      socket.on("recive-offer", async (res) => {
+        // 开始回应者的远程操作
+        let pc = new PeerConnection();
+        pc.onicecandidate = (evt) => {
+          if (evt.candidate) {
+            socket.emit("need-ice_candidate", {
+              roomId: joinRoomId.value,
+              userId: remoteUserId.value,
+              candidate: evt.candidate,
+            });
+          }
+        };
+        pc.onaddstream = (evt) => {
+          let stream = evt.stream;
+          remoteVideoStream.srcObject = stream;
+          remoteVideoStream.play();
+        };
+        // pc.ontrack = (ev) => {
+        //   if (ev.streams && ev.streams[0]) {
+        //     console.log("响应者-监听track");
+        //     remoteVideoStream.srcObject = ev.streams[0];
+        //   }
+        // };
+        peerConnection = pc;
+        peerConnection.setRemoteDescription(
+          new nativeRTCSessionDescription(res.sdp)
+        );
+        // let gumStream = await navigator.mediaDevices.getUserMedia({
+        //   video: true,
+        //   audio: true,
+        // });
+        // localVideoStream.srcObject = gumStream;
+        let stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        localVideoStream.srcObject = stream;
+        localVideoStream.play();
+        peerConnection.addStream(stream);
+        // for (const track of gumStream.getTracks()) {
+        //   peerConnection.addTrack(track);
+        // }
+      });
+      socket.on("remote-dsp", (res) => {
+        peerConnection.setRemoteDescription(
+          new nativeRTCSessionDescription(res.sdp)
+        );
+      });
+      socket.on("ice-candidate", (res) => {
+        var candidate = new nativeRTCIceCandidate(res.candidate);
+        peerConnection.addIceCandidate(candidate);
+      });
+      socket.on("createRoomSuccess", (res) => {
+        if (res.code == 0) {
+          alert(res.msg);
+          return;
+        }
+        alert("创建房间失败");
+      });
+      socket.on("recive-socket-leave", (res) => {
+        // 获取所有可用的媒体设备（包括摄像头和麦克风）
+
+        // 先将本地以及远程的摄像头关闭
+        localVideoStream.srcObject.getTracks().forEach((track) => {
+          track.stop(); // 停止摄像头轨道
+        });
+        remoteVideoStream.srcObject.getTracks().forEach((track) => {
+          track.stop(); // 停止摄像头轨道
+        });
+        // 然后再将视频关闭
+        localVideoStream.srcObject = null;
+        remoteVideoStream.srcObject = null;
+        // localVideoStream.srcObject = null;
+        // remoteVideoStream.srcObject = null;
+        // navigator.mediaDevices
+        //   .enumerateDevices()
+        //   .then((devices) => {
+        //     console.log(devices);
+        //     // 遍历设备列表，查找摄像头设备
+        //     devices.forEach((device) => {
+        //       if (device.kind === "videoinput") {
+        //         // 关闭摄像头设备
+        //         navigator.mediaDevices
+        //           .getUserMedia({
+        //             video: { deviceId: device.deviceId, exact: true },
+        //           })
+        //           .then((stream) => {
+        //             stream.getTracks().forEach((track) => {
+        //               track.stop(); // 停止摄像头轨道
+        //             });
+        //           })
+        //           .catch((error) => {
+        //             console.error("关闭摄像头失败:", error);
+        //           });
+        //       }
+        //     });
+        //   })
+        //   .catch((error) => {
+        //     console.error("获取媒体设备列表失败:", error);
+        //   });
+      });
+      const socketNum = document.getElementById("socket");
+      socketNum.addEventListener("click", async () => {
+        socket.emit("socket-rooms");
+      });
+      socket.on("get-socket-rooms-success", (data) => {
+        console.log(data);
+      });
+      socket.on("connect", (res) => {
+        console.log("连接成功");
+      });
+      socket.on("disconnect", () => {
+        console.log("Disconnected from server");
+        // 处理服务器端断开连接后的逻辑
+      });
+
+      socket.on("reconnect", (attemptNumber) => {
+        console.log(`Reconnected to server after ${attemptNumber} attempts`);
+      });
+    </script>
+  </body>
+</html>
